@@ -1,0 +1,63 @@
+trigger:
+- main
+
+variables:
+  buildConfiguration: 'Release'
+
+stages:
+- stage: Build
+  displayName: 'Build and Publish'
+  jobs:
+  - job: BuildJob
+    displayName: 'Build and Publish Job'
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - script: dotnet build --configuration $(buildConfiguration)
+      displayName: 'dotnet build $(buildConfiguration)'
+
+    - task: DotNetCoreCLI@2
+      inputs:
+        command: 'publish'
+        publishWebProjects: True
+        arguments: '--configuration $(BuildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+        zipAfterPublish: True
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Artifact'
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: 'drop'
+
+
+
+- stage: Deploy
+  displayName: 'Deploy to Azure App Service'
+  jobs:
+  - job: DeployJob
+    displayName: 'Deploying App to Azure App Service'
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    - download: current
+      artifact: drop
+
+    # - task: AzureWebApp@1
+    #   displayName: 'Deploy App to Azure App Service'
+    #   inputs:
+    #     azureSubscription: 'my-svc'
+    #     appType: 'webApp'
+    #     appName: 'dotnetappv2'
+    #     package: '$(Pipeline.Workspace)/drop/**/*.zip'
+    #     deploymentMethod: 'auto'
+    - task: PowerShell@2
+      displayName: 'Deploy multiple zip files'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $zipFiles = Get-ChildItem -Path "$(Pipeline.Workspace)/drop" -Filter *.zip
+          foreach ($zipFile in $zipFiles) {
+            Write-Host "Deploying $($zipFile.Name)"
+            Invoke-Expression -Command "az webapp deployment source config-zip --resource-group dotnetapp_group --name dotnetappv2 --src $($zipFile.FullName)"
+          }
+        pwsh: true
